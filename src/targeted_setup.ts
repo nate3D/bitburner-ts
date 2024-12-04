@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { gatherConstants } from "main";
+import { gatherConstants, targetedHack, getAllServers, killAllProcesses, findBestServers } from "main";
 
 /** Main function to deploy a script to all available servers
  * @param {NS} ns - Netscript API object
@@ -11,7 +11,10 @@ export async function main(ns: NS): Promise<void> {
   }
 
   const force = ns.args[0] === "true" || ns.args[0] === true;
-  const allServers = await getAllServers(ns);
+  await findBestServers(ns);
+  const top_servers = JSON.parse(ns.read("/data/top_servers.json"));
+  const targetServers = top_servers.map((s: { server: string }) => s.server);
+  const allServers = (await getAllServers(ns)).filter((s: string) => !s.startsWith("mgmt") || !s.startsWith("home") || !s.startsWith("srv"));
   const payloads = [
     "scripts/hack.js",
     "scripts/weaken.js",
@@ -20,7 +23,6 @@ export async function main(ns: NS): Promise<void> {
     "hack.js",
   ];
   const servers: string[] = [];
-  const jobServers: string[] = [];
   const emptyServers: string[] = [];
   const emptyServersFile = "/empty-servers.txt";
   const failedServers: string[] = [];
@@ -28,19 +30,6 @@ export async function main(ns: NS): Promise<void> {
 
   // Identify vulnerable servers, excluding "srv" servers and home
   for (const server of allServers) {
-    if (
-      server.startsWith("mgmt") ||
-      server.startsWith("home")
-    ) {
-      ns.tprint(`Skipping private server: ${server}`);
-      continue;
-    }
-
-    if (server.startsWith("srv")) {
-      jobServers.push(server);
-      continue;
-    }
-
     if (!ns.hasRootAccess(server)) {
       let openPorts = 0;
 
@@ -82,38 +71,6 @@ export async function main(ns: NS): Promise<void> {
     await ns.scp(datafile, server, "home");
   }
 
-  // Deploy the payload to all job servers
-  for (const server of jobServers) {
-    ns.tprint(`Deploying to job server ${server}...`);
-    await ns.sleep(1000);
-
-    // Kill all processes on the server
-    killAllProcesses(ns, server);
-
-    try {
-      // Copy the target script to the server
-      for (const payload of payloads) {
-        const copySuccess = await ns.scp(payload, server, "home");
-        if (copySuccess) {
-          ns.tprint(`Successfully copied ${payload} to ${server}`);
-        } else {
-          ns.tprint(`Failed to copy ${payload} to ${server}`);
-          failedServers.push(server);
-          continue; // Skip to the next server
-        }
-      }
-
-      // Copy all datafiles to the job server
-      for (const server of servers) {
-        // Create the datafile and gather constants
-        const datafile = `data/${server}-constants.json`;
-        await ns.scp(datafile, server, "home");
-      }
-    } catch (error) {
-      ns.tprint(`Error handling server ${server}: ${error}`);
-      failedServers.push(server);
-    }
-  }
 
   if (servers.length === 0) {
     ns.tprint(`No vulnerable servers found.`);
@@ -121,12 +78,15 @@ export async function main(ns: NS): Promise<void> {
   }
 
   ns.tprint(
-    `Found ${servers.length} vulnerable servers: ${servers.join(", ")}`
+    `
+    Found ${servers.length} vulnerable servers: ${servers.join(", ")}
+    Targeting ${targetServers.length} servers: ${targetServers.join(", ")}
+    `
   );
   await ns.sleep(5000);
 
   // Deploy and run scripts on the vulnerable servers
-  for (const server of servers) {
+  for (const server of targetServers) {
     ns.tprint("");
 
     // Check if server has any money
@@ -152,7 +112,6 @@ export async function main(ns: NS): Promise<void> {
     }
 
     ns.tprint(`Deploying to ${server}...`);
-    await ns.sleep(1000);
 
     // Kill all processes on the server
     killAllProcesses(ns, server);
@@ -160,7 +119,7 @@ export async function main(ns: NS): Promise<void> {
     try {
       // Copy the target script to the server
       for (const payload of payloads) {
-        const copySuccess = await ns.scp(payload, server, "home");
+        const copySuccess = ns.scp(payload, server, "home");
         if (copySuccess) {
           ns.tprint(`Successfully copied ${payload} to ${server}`);
         } else {
@@ -173,7 +132,7 @@ export async function main(ns: NS): Promise<void> {
       // Create the datafile and gather constants
       const datafile = await gatherConstants(ns, server);
 
-      await ns.scp(datafile, server, "home");
+      ns.scp(datafile, server, "home");
 
       const pid = ns.exec("hack.js", server, 1, server); // Pass targetServer as argument
       if (pid > 0) {
@@ -196,62 +155,4 @@ export async function main(ns: NS): Promise<void> {
   ns.write(failedServersFile, failedServersData, "w");
 }
 
-/**
- * Recursively finds all servers in the network.
- * @param {NS} ns - Netscript object
- * @param {string} [current="home"] - Current server being scanned
- * @param {Set<string>} [visited=new Set()] - Set of visited servers
- * @returns {Promise<string[]>} - List of all server hostnames
- */
-async function getAllServers(
-  ns: NS,
-  current = "home",
-  visited: Set<string> = new Set()
-): Promise<string[]> {
-  visited.add(current);
-  const neighbors = ns.scan(current);
-  for (const neighbor of neighbors) {
-    if (!visited.has(neighbor)) {
-      visited.add(neighbor);
-      await getAllServers(ns, neighbor, visited);
-    }
-  }
-  return Array.from(visited).filter((server) => {
-    // Include only servers that are not home or private, but include srv-[A-Z]
-    return !server.startsWith("home") && (!server.startsWith("mgmt") || server.match(/^srv-[A-Z]$/));
-  });
-}
 
-/**
- * Kills all processes running on a specified server.
- * @param {NS} ns - Netscript object
- * @param {string} server - The hostname of the server to kill all processes on
- * @returns {boolean} - True if any processes were killed, false otherwise
- */
-export function killAllProcesses(ns: NS, server: string): boolean {
-  const processes = ns.ps(server); // Get all running processes on the server
-  if (processes.length === 0) {
-    ns.tprint(`No processes running on ${server}.`);
-    return false;
-  }
-
-  for (const process of processes) {
-    try {
-      const success = ns.kill(process.pid as unknown as string, server);
-
-      if (success) {
-        ns.tprint(
-          `Killed process ${process.filename} with PID ${process.pid} on ${server}.`
-        );
-      } else {
-        ns.tprint(
-          `Failed to kill process ${process.filename} with PID ${process.pid} on ${server}.`
-        );
-      }
-    } catch (error) {
-      ns.tprint(`Unexpected error while killing processes: ${error}`);
-    }
-  }
-
-  return true;
-}
