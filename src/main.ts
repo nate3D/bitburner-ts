@@ -1,26 +1,94 @@
 import { NS } from "@ns";
 
 export async function main(ns: NS): Promise<void> {
-  const target = ns.args[0] as string;
-  const host = ns.getHostname();
+  const interval = 100; // Trigger action every 100 levels
+  const scriptToRun = "targeted_setup.js";
+  const ipvgoScript = "ipvgo_v2.js"
+  let ipvgoPid = 0;
+  const mgmtSrv = "mgmt-A";
+  const mgmtRam = 128;
+  let mgmtOwned = ns.serverExists(mgmtSrv);
+  let lastCheckedLevel = ns.getHackingLevel(); // Store initial hacking level
+  const currentLevel = ns.getHackingLevel();
+  let targetCount = getDynamicTargetCount(currentLevel);
 
-  if (!target) {
-    ns.tprint("ERROR: Target server not specified.");
-    ns.tprint("Usage: run main.ts [target]");
-    return;
+  // Kill all hack.js processes
+  await killHackProcesses(ns);
+
+  // Execute targeted_setup.js with specified arguments
+  const pid = ns.exec(scriptToRun, "home", 1, true, targetCount);
+  if (pid > 0) {
+    ns.tprint(`Successfully started ${scriptToRun} with PID ${pid}.`);
+  } else {
+    ns.tprint(`Failed to start ${scriptToRun}. Check your script or system resources.`);
   }
 
-  ns.tprint(`Gathering constants for ${target}...`);
-  const datafile = await gatherConstants(ns, target, host);
+  ns.tprint("Starting main loop...");
+  while (true) {
+    // Cache server limits and costs
+    const serverCost = ns.getPurchasedServerCost(mgmtRam);
+    const availableMoney = ns.getServerMoneyAvailable("home");
 
-  if (!datafile) {
-    ns.tprint(`ERROR: Could not gather constants for ${target}.`);
-    return;
+    // Check if there's enough money to purchase a server
+    if (!mgmtOwned) {
+      if (availableMoney >= serverCost) {
+        const hostname = ns.purchaseServer(mgmtSrv, mgmtRam);
+
+        if (hostname) {
+          ns.tprint(`Purchased server "${hostname}" for $${serverCost.toLocaleString()}`);
+          mgmtOwned = true;
+        } else {
+          ns.tprint(`Failed to purchase server.`);
+        }
+      } else {
+        ns.print(`Insufficient funds: $${availableMoney.toLocaleString()} / $${serverCost.toLocaleString()}`);
+      }
+    } else {
+      // If mgmt-A is available, run the IPvGo script
+      if (mgmtOwned && ipvgoPid === 0) {
+        ns.tprint(`Running IPvGO script on ${mgmtSrv}...`);
+        ns.scp(ipvgoScript, mgmtSrv);
+        ipvgoPid = ns.exec(ipvgoScript, mgmtSrv, 1);
+        if (ipvgoPid > 0) {
+          ns.tprint(`Successfully started ${ipvgoScript} with PID ${ipvgoPid}.`);
+        } else {
+          ns.tprint(`Failed to start ${ipvgoScript}. Check your script or system resources.`);
+        }
+      }
+    }
+
+    // Check if the hacking level has increased by the interval
+    if (currentLevel >= lastCheckedLevel + interval) {
+      ns.tprint(`Hacking level increased to ${currentLevel}. Triggering actions...`);
+      targetCount = getDynamicTargetCount(currentLevel);
+
+      // Kill all hack.js processes
+      await killHackProcesses(ns);
+
+      // Execute targeted_setup.js with specified arguments
+      const pid = ns.exec(scriptToRun, "home", 1, true, targetCount);
+      if (pid > 0) {
+        ns.tprint(`Successfully started ${scriptToRun} with PID ${pid}.`);
+      } else {
+        ns.tprint(`Failed to start ${scriptToRun}. Check your script or system resources.`);
+      }
+
+      // Update the last checked level
+      lastCheckedLevel = currentLevel;
+    }
+
+    // Wait for a short interval before checking again
+    await ns.sleep(10000);
   }
-
-  // Store the top servers
-  await findBestServers(ns);
 }
+
+function getDynamicTargetCount(currentLevel: number, minTarget = 10, maxTarget = 99, maxLevel = 1000): number {
+  if (currentLevel >= maxLevel) {
+    return maxTarget; // Cap at maxTarget if level exceeds maxLevel
+  }
+  return Math.round(minTarget + ((maxTarget - minTarget) / maxLevel) * currentLevel);
+}
+
 
 export async function gatherConstants(ns: NS, target: string, host?: string): Promise<string> {
   const hostname = host || ns.getHostname();
@@ -85,7 +153,7 @@ export async function gatherConstants(ns: NS, target: string, host?: string): Pr
     growRam: growRam,
   };
   ns.write(datafile, JSON.stringify(constants), "w");
-  ns.tprint(`Wrote constants to ${datafile}`);
+  ns.print(`Wrote constants to ${datafile}`);
 
   return datafile;
 }
@@ -118,7 +186,7 @@ export async function getAllServers(
  * Finds the best servers to hack based on max money and hack time.
  * @param ns - Netscript object provided by Bitburner.
  */
-export async function findBestServers(ns: NS): Promise<void> {
+export async function findBestServers(ns: NS, count: number = 1): Promise<void> {
   const allServers = await getAllServers(ns);
   const hackableServers = [];
 
@@ -152,18 +220,7 @@ export async function findBestServers(ns: NS): Promise<void> {
   serverRatings.sort((a, b) => b.score - a.score);
 
   // Get the top servers
-  const topServers = serverRatings.slice(0, 10);
-
-  // Output the results
-  ns.tprint("Top hackable servers based on max money and hack time:");
-  for (const { server, maxMoney, hackTime, score } of topServers) {
-    ns.tprint(
-      `Server: ${server}, 
-       Max Money: ${ns.formatNumber(maxMoney)}, 
-       Hack Time: ${ns.tFormat(hackTime)}, 
-       Score: ${score.toFixed(2)}`
-    );
-  }
+  const topServers = serverRatings.slice(0, count);
 
   const top_servers_file = `/data/top_servers.json`;
   ns.write(top_servers_file, JSON.stringify(topServers), "w");
@@ -218,4 +275,37 @@ export function killAllProcesses(ns: NS, server: string): boolean {
   }
 
   return true;
+}
+
+export async function killHackProcesses(ns: NS): Promise<void> {
+  // Get all servers in the network
+  const allServers = await getAllServers(ns);
+
+  for (const server of allServers) {
+    // Get all running processes on the server
+    const processes = ns.ps(server);
+
+    // Filter processes that match 'hack.js'
+    const hackProcesses = processes.filter(proc =>
+      proc.filename === "hack.js" ||
+      proc.filename === "scripts/hack.js" ||
+      proc.filename === "scripts/grow.js" ||
+      proc.filename === "scripts/weaken.js");
+
+    if (hackProcesses.length > 0) {
+      ns.tprint(`Found ${hackProcesses.length} instance(s) of hacking scripts running on ${server}. Killing...`);
+
+      for (const proc of hackProcesses) {
+        if (ns.kill(proc.pid)) {
+          ns.tprint(`Successfully killed hacks with PID ${proc.pid} on ${server}.`);
+        } else {
+          ns.tprint(`Failed to kill hacks with PID ${proc.pid} on ${server}.`);
+        }
+      }
+    } else {
+      ns.print(`No hack processes found on ${server}.`);
+    }
+  }
+
+  ns.tprint("Completed killing hack processes on all servers.");
 }

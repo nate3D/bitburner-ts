@@ -57,7 +57,7 @@ export async function main(ns: NS): Promise<void> {
       ramCost: number
     ): Promise<number> => {
       const jobServers = purchasedServers.filter((s: string) => ns.serverExists(s) && !s.startsWith("mgmt") && !s.startsWith("home"));
-      const allServers = [target, ...jobServers, ...hackableServers, "home"]; // Use purchased servers and home
+      const allServers = ["home", target, ...jobServers, ...hackableServers]; // Use purchased servers and home
 
       let remainingThreads = threads; // Threads that still need to be allocated
       let totalStartedThreads = 0; // Keep track of successfully started threads

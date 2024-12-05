@@ -1,4 +1,5 @@
 import { NS } from "@ns";
+import { logToFile } from "./logger";
 import { gatherConstants, targetedHack, getAllServers, killAllProcesses, findBestServers } from "main";
 
 /** Main function to deploy a script to all available servers
@@ -6,12 +7,21 @@ import { gatherConstants, targetedHack, getAllServers, killAllProcesses, findBes
  */
 export async function main(ns: NS): Promise<void> {
   if (ns.args.length < 1) {
-    ns.tprint("Usage: run setup.js force=[true|false]");
+    ns.tprint(
+      `Usage: run targeted_setup.js force=[true|false] targetCount=[0:99]
+       e.g. run targeted_setup.js true 20`);
     return;
   }
 
   const force = ns.args[0] === "true" || ns.args[0] === true;
-  await findBestServers(ns);
+  const count = Number(ns.args[1]);
+
+  if (isNaN(count) || count < 0 || count > 99) {
+    ns.tprint(`targetCount must be a number between 0 and 99`)
+  }
+
+
+  await findBestServers(ns, count);
   const top_servers = JSON.parse(ns.read("/data/top_servers.json"));
   const targetServers = top_servers.map((s: { server: string }) => s.server);
   const allServers = (await getAllServers(ns)).filter((s: string) => !s.startsWith("mgmt") || !s.startsWith("home") || !s.startsWith("srv"));
@@ -121,7 +131,7 @@ export async function main(ns: NS): Promise<void> {
       for (const payload of payloads) {
         const copySuccess = ns.scp(payload, server, "home");
         if (copySuccess) {
-          ns.tprint(`Successfully copied ${payload} to ${server}`);
+          ns.print(`Successfully copied ${payload} to ${server}`);
         } else {
           ns.tprint(`Failed to copy ${payload} to ${server}`);
           failedServers.push(server);
@@ -143,6 +153,10 @@ export async function main(ns: NS): Promise<void> {
         ns.tprint(`Failed to start hack.js on ${server}`);
         failedServers.push(server);
       }
+
+      const sleepTime = 5000;
+      ns.tprint(`Sleeping ${sleepTime / 1000} seconds between starts...`)
+      await ns.sleep(sleepTime)
     } catch (error) {
       ns.tprint(`Error handling server ${server}: ${error}`);
       failedServers.push(server);
