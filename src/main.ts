@@ -1,6 +1,23 @@
 import { NS } from "@ns";
 
 export async function main(ns: NS): Promise<void> {
+  const initFile = "/data/init_complete.txt";
+  // Check if initialization file exists
+  if (ns.fileExists(initFile, "home")) {
+    ns.tprint("Initialization already completed. Exiting...");
+    return;
+  }
+
+  ns.tprint("Starting initialization process...");
+
+  // Perform your initialization logic
+  await performInitialization(ns);
+
+  // Mark initialization as complete
+  ns.write(initFile, "Initialization complete", "w");
+}
+
+async function performInitialization(ns: NS): Promise<void> {
   const interval = 100; // Trigger action every 100 levels
   const scriptToRun = "targeted_setup.js";
   const ipvgoScript = "ipvgo_v2.js"
@@ -62,9 +79,6 @@ export async function main(ns: NS): Promise<void> {
       ns.tprint(`Hacking level increased to ${currentLevel}. Triggering actions...`);
       targetCount = getDynamicTargetCount(currentLevel);
 
-      // Kill all hack.js processes
-      await killHackProcesses(ns);
-
       // Execute targeted_setup.js with specified arguments
       const pid = ns.exec(scriptToRun, "home", 1, true, targetCount);
       if (pid > 0) {
@@ -115,7 +129,6 @@ export async function gatherConstants(ns: NS, target: string, host?: string): Pr
   const purchasedServers = ns.getPurchasedServers();
   const hackableServers = (await getAllServers(ns)).filter((s) =>
     ns.getServerRequiredHackingLevel(s) <= hackingLevel &&
-    !s.startsWith(".") &&
     !s.startsWith("home") &&
     !s.startsWith("srv") &&
     !s.startsWith("mgmt") &&

@@ -1,8 +1,9 @@
 import { NS } from "@ns";
 
 /**
- * This updated script introduces enhanced endgame detection and a new "aggro" strategy.
- * It ensures that the script can intelligently decide when to pass, avoiding over-extension.
+ * This updated script introduces enhanced defensive strategies specifically tailored
+ * for combating aggressive AI opponents like "The Black Hand". It prioritizes defense,
+ * reinforces vulnerable networks, and prevents overextension within the "aggro" strategy.
  */
 
 /** @param {NS} ns */
@@ -11,7 +12,7 @@ export async function main(ns: NS) {
     const size = 9; // Adjust as needed
 
     // Strategy mode argument
-    const strategyMode = (ns.args[0] && typeof ns.args[0] === 'string') ? ns.args[0].toLowerCase() : "aggro";
+    const strategyMode = (ns.args[0] && typeof ns.args[0] === 'string') ? ns.args[0].toLowerCase() : "balanced";
 
     if (!ns.go) {
         ns.tprint("Error: ns.go API not available.");
@@ -84,8 +85,7 @@ export async function main(ns: NS) {
             }
 
             await ns.go.opponentNextTurn();
-            await ns.sleep(200);
-            ns.tprint(`Game state: ${result?.type}`);
+            await ns.sleep(100);
         } while (result?.type !== "gameOver");
 
         ns.print("Game over.");
@@ -101,99 +101,116 @@ export async function main(ns: NS) {
     }
 }
 
-function getBestMove(ns: NS, board: string[], validMoves: boolean[][], strategyMode: string): { x: number; y: number } | null {
-    // Collect candidate moves from each category
-    const candidates: { x: number; y: number; type: string }[] = [];
+function getBestMove(
+    ns: NS,
+    board: string[],
+    validMoves: boolean[][],
+    strategyMode: string
+): { x: number; y: number } | null {
+    // Define the type for move strategies
+    type MoveStrategy = {
+        fn: (
+            ns: NS,
+            b: string[],
+            v: boolean[][]
+        ) => { x: number; y: number } | null;
+        type: string;
+    };
 
-    // Define strategy orders for each mode
-    const strategyOrders: Record<string, Array<{ fn: (ns: NS, b: string[], v: boolean[][]) => { x: number; y: number } | null, type: string }>> = {
-        "attack": [
+    // Define the strategies
+    const strategyOrders: Record<string, MoveStrategy[]> = {
+        aggro: [
             { fn: findCaptureMove, type: "capture" },
+            { fn: findDefendMove, type: "defend" },
             { fn: findAttackMove, type: "attack" },
             { fn: findExpansionMove, type: "expansion" },
-            { fn: findDefendMove, type: "defend" },
             { fn: getCenterFocusedMove, type: "center" }
         ],
-        "defense": [
-            { fn: findCaptureMove, type: "capture" },
-            { fn: findDefendMove, type: "defend" },
-            { fn: findExpansionMove, type: "expansion" },
-            { fn: findAttackMove, type: "attack" },
-            { fn: getCenterFocusedMove, type: "center" }
-        ],
-        "expansion": [
-            { fn: findCaptureMove, type: "capture" },
-            { fn: findExpansionMove, type: "expansion" },
-            { fn: findAttackMove, type: "attack" },
-            { fn: findDefendMove, type: "defend" },
-            { fn: getCenterFocusedMove, type: "center" }
-        ],
-        "prioritized": [
-            { fn: findCaptureMove, type: "capture" },
-            { fn: getCenterFocusedMove, type: "center" },
-            { fn: findAttackMove, type: "attack" },
-            { fn: findDefendMove, type: "defend" },
-            { fn: findExpansionMove, type: "expansion" }
-        ],
-        "balanced": [
+        balanced: [
             { fn: findCaptureMove, type: "capture" },
             { fn: findAttackMove, type: "attack" },
             { fn: findDefendMove, type: "defend" },
             { fn: findExpansionMove, type: "expansion" },
             { fn: getCenterFocusedMove, type: "center" }
         ],
-        "aggro": [ // New Aggro Strategy
+        defense: [
             { fn: findCaptureMove, type: "capture" },
-            { fn: findAttackMove, type: "attack" },
             { fn: findDefendMove, type: "defend" },
             { fn: findExpansionMove, type: "expansion" },
+            { fn: findAttackMove, type: "attack" },
             { fn: getCenterFocusedMove, type: "center" }
         ]
     };
 
+    // Ensure strategyMode is a valid key in strategyOrders
     const order = strategyOrders[strategyMode] || strategyOrders["balanced"];
+    const candidates: { x: number; y: number; type: string }[] = [];
 
-    // Gather all potential moves based on strategy priority
+    // Collect candidate moves
     for (const { fn, type } of order) {
         const move = fn(ns, board, validMoves);
         if (move) {
-            candidates.push({ x: move.x, y: move.y, type });
-            // Continue gathering to evaluate all possible candidates
+            candidates.push({ ...move, type });
         }
     }
 
     if (candidates.length === 0) return null;
 
-    // Evaluate all candidate moves with a look-ahead heuristic
-    let bestScore = -Infinity;
     let bestMove: { x: number; y: number } | null = null;
+    let bestScore = -Infinity;
 
-    for (const c of candidates) {
-        const score = scoreMove(ns, board, c.x, c.y);
+    // Evaluate candidates
+    for (const candidate of candidates) {
+        const score = scoreMove(ns, board, candidate.x, candidate.y, candidate.type);
         if (score > bestScore) {
             bestScore = score;
-            bestMove = { x: c.x, y: c.y };
+            bestMove = { x: candidate.x, y: candidate.y };
         }
-    }
-
-    if (bestMove) {
-        ns.print(`Chosen move at (${bestMove.x}, ${bestMove.y}) with score ${bestScore}.`);
     }
 
     return bestMove;
 }
 
-function scoreMove(ns: NS, board: string[], x: number, y: number): number {
-    // Simulate placing 'X' (our router) at (x,y) and then evaluate the board.
-    const newBoard = simulateBoardAfterMove(board, x, y, 'X');
 
-    // Evaluate the board using a heuristic
-    const { xCount, oCount, xLib, oLib } = countRoutersAndLiberties(newBoard);
+function scoreMove(ns: NS, board: string[], x: number, y: number, moveType: string) {
+    const simulatedBoard = simulateBoardAfterMove(board, x, y, 'X');
+    const { xCount, oCount, xLib, oLib } = countRoutersAndLiberties(simulatedBoard);
 
-    // Heuristic Formula:
-    // (Our Routers - Opponent's Routers) + (Our Liberties - Opponent's Liberties) * 0.5
-    const score = (xCount - oCount) + (xLib - oLib) * 0.5;
+    let score = (xCount - oCount) + (xLib - oLib) * 0.5;
+    const disconnectionPenalty = evaluateDisconnection(simulatedBoard, x, y);
+    score -= disconnectionPenalty;
+
+    switch (moveType) {
+        case "capture": score += 3; break;
+        case "defend": score += 2; break;
+        case "attack": score += 1; break;
+        case "expansion": score += 0.5; break;
+    }
+
     return score;
+}
+
+function evaluateDisconnection(board: string[], x: number, y: number) {
+    // Evaluate if placing a router at (x, y) creates disconnected groups
+    // Higher penalty for isolated groups
+    const size = board.length;
+    const directions = [
+        { dx: -1, dy: 0 },
+        { dx: 1, dy: 0 },
+        { dx: 0, dy: -1 },
+        { dx: 0, dy: 1 },
+    ];
+    let penalty = 0;
+
+    for (const dir of directions) {
+        const nx = x + dir.dx, ny = y + dir.dy;
+        if (nx < 0 || nx >= size || ny < 0 || ny >= size) continue;
+        if (board[nx][ny] === '.') {
+            penalty += 0.5; // Add penalty for creating isolated nodes
+        }
+    }
+
+    return penalty;
 }
 
 function simulateBoardAfterMove(board: string[], x: number, y: number, router: 'X' | 'O'): string[] {
@@ -416,33 +433,15 @@ function isAdjacentToFriendlyStrongNetwork(ns: NS, board: string[], liberties: n
     return false;
 }
 
-function shouldPass(ns: NS, board: string[], validMoves: boolean[][], strategyMode: string, size: number): boolean {
-    /**
-     * Evaluates whether the script should pass based on the current board state.
-     * Returns true if passing is advisable, false otherwise.
-     */
-
-    // Heuristic 1: No beneficial moves available
+function shouldPass(ns: NS, board: string[], validMoves: boolean[][], strategyMode: string, size: number) {
     const beneficialMoveExists = getBestMove(ns, board, validMoves, strategyMode) !== null;
+    if (!beneficialMoveExists) return true;
 
-    if (!beneficialMoveExists) {
-        return true;
-    }
-
-    // Heuristic 2: Majority control of the board
     const { xCount, oCount } = countRoutersAndLiberties(board);
-    if (xCount > oCount + 2) { // Threshold can be adjusted
-        return true;
-    }
+    if (xCount > oCount + 2) return true;
 
-    // Heuristic 3: High density of own routers, risking over-extension
-    const densityThreshold = 0.7; // 70% of the board filled
-    const totalRouters = xCount + oCount;
-    if (totalRouters / (size * size) > densityThreshold) {
-        return true;
-    }
-
-    // Additional heuristics can be added as needed
+    const density = (xCount + oCount) / (size * size);
+    if (density > 0.7) return true;
 
     return false;
 }

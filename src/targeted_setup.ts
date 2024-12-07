@@ -19,8 +19,8 @@ export async function main(ns: NS): Promise<void> {
   if (isNaN(count) || count < 0 || count > 99) {
     ns.tprint(`targetCount must be a number between 0 and 99`)
   }
-
-
+  const jobServers = ns.getPurchasedServers().filter((s: string) => ns.serverExists(s) && !s.startsWith("mgmt") && !s.startsWith("home"));
+  const hackScriptRam = ns.getScriptRam("hack.js", "home");
   await findBestServers(ns, count);
   const top_servers = JSON.parse(ns.read("/data/top_servers.json"));
   const targetServers = top_servers.map((s: { server: string }) => s.server);
@@ -78,7 +78,21 @@ export async function main(ns: NS): Promise<void> {
 
     // Create a datafile for each server
     const datafile = await gatherConstants(ns, server);
-    await ns.scp(datafile, server, "home");
+    ns.scp(datafile, server, "home");
+    for (const payload of payloads) {
+      ns.scp(payload, server, "home");
+    }
+  }
+
+  // Copy datafiles and payloads to all job servers
+  for (const jobServer of jobServers) {
+    for (const server of servers) {
+      ns.scp(`/data/${server}-constants.json`, jobServer, "home");
+    }
+
+    for (const payload of payloads) {
+      ns.scp(payload, jobServer, "home");
+    }
   }
 
 
@@ -120,41 +134,40 @@ export async function main(ns: NS): Promise<void> {
         continue;
       }
     }
-
     ns.tprint(`Deploying to ${server}...`);
 
     // Kill all processes on the server
     killAllProcesses(ns, server);
 
     try {
-      // Copy the target script to the server
-      for (const payload of payloads) {
-        const copySuccess = ns.scp(payload, server, "home");
-        if (copySuccess) {
-          ns.print(`Successfully copied ${payload} to ${server}`);
-        } else {
-          ns.tprint(`Failed to copy ${payload} to ${server}`);
-          failedServers.push(server);
-          continue; // Skip to the next server
-        }
-      }
-
-      // Create the datafile and gather constants
-      const datafile = await gatherConstants(ns, server);
-
-      ns.scp(datafile, server, "home");
-
-      const pid = ns.exec("hack.js", server, 1, server); // Pass targetServer as argument
+      const pid = ns.exec("hack.js", server, 1, server);
       if (pid > 0) {
         ns.tprint(
           `Successfully started hack.js on ${server} targeting ${server}`
         );
       } else {
-        ns.tprint(`Failed to start hack.js on ${server}`);
-        failedServers.push(server);
+        ns.tprint(`Failed to start hack.js on ${server} targeting ${server}`);
+        ns.tprint(`Available job servers: ${jobServers.join(", ")}`);
+        for (const jobServer of jobServers) {
+          ns.tprint(`Failed to start hack.js on ${server} targeting ${server}. Attempting to start on ${jobServer}...`);
+          ns.tprint(`Checking available RAM on ${jobServer}...`);
+          const jobServerAvailableRam = ns.getServerMaxRam(jobServer) - ns.getServerUsedRam(jobServer);
+          ns.tprint(`Available RAM on ${jobServer}: ${jobServerAvailableRam}`);
+          if (jobServerAvailableRam >= hackScriptRam) {
+            const pid = ns.exec("hack.js", jobServer, 1, server);
+            if (pid > 0) {
+              ns.tprint(
+                `Successfully started hack.js on ${jobServer} targeting ${server}`
+              );
+              break;
+            } else {
+              ns.tprint(`Failed to start hack.js on ${jobServer} targeting ${server}`);
+            }
+          }
+        }
       }
 
-      const sleepTime = 5000;
+      const sleepTime = 500;
       ns.tprint(`Sleeping ${sleepTime / 1000} seconds between starts...`)
       await ns.sleep(sleepTime)
     } catch (error) {
