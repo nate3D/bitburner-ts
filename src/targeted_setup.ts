@@ -124,20 +124,21 @@ export async function main(ns: NS): Promise<void> {
 
     // Check if server is currently running our work
     ns.tprint(`Checking if ${server} is running...`);
-    if (!force) {
-      const processes = ns.ps(server);
-      const isRunningHackJs = processes.some(
-        (proc) => proc.filename === "hack.js"
-      );
-      if (isRunningHackJs) {
-        ns.tprint(`${server} is already running hack.js. Skipping...`);
-        continue;
+
+    const processes = ns.ps(server);
+    const isRunningHackJs = processes.some(
+      (proc) => proc.filename === "hack.js"
+    );
+    if (isRunningHackJs) {
+      if (force) {
+        ns.tprint(`Force flag is set, killing all processes on ${server}`);
+        killAllProcesses(ns, server);
+      } else {
+        ns.tprint(`${server} is currently running hack.js, running again...`)
       }
     }
-    ns.tprint(`Deploying to ${server}...`);
 
-    // Kill all processes on the server
-    killAllProcesses(ns, server);
+    ns.tprint(`Deploying to ${server}...`);
 
     try {
       const pid = ns.exec("hack.js", server, 1, server);

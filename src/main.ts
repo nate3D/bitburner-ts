@@ -1,7 +1,9 @@
 import { NS } from "@ns";
 
 export async function main(ns: NS): Promise<void> {
+  const iterations = ns.args[0] as number || 1;
   const initFile = "/data/init_complete.txt";
+
   // Check if initialization file exists
   if (ns.fileExists(initFile, "home")) {
     ns.tprint("Initialization already completed. Exiting...");
@@ -11,58 +13,43 @@ export async function main(ns: NS): Promise<void> {
   ns.tprint("Starting initialization process...");
 
   // Perform your initialization logic
-  await performInitialization(ns);
+  await performInitialization(ns, iterations);
 
   // Mark initialization as complete
   ns.write(initFile, "Initialization complete", "w");
 }
 
-async function performInitialization(ns: NS): Promise<void> {
-  const interval = 100; // Trigger action every 100 levels
+
+async function performInitialization(ns: NS, iterations: number): Promise<void> {
   const scriptToRun = "targeted_setup.js";
-  const ipvgoScript = "ipvgo_v2.js"
+  const ipvgoScript = "ipvgo_v2.js";
   let ipvgoPid = 0;
   const mgmtSrv = "mgmt-A";
   const mgmtRam = 128;
   let mgmtOwned = ns.serverExists(mgmtSrv);
-  let lastCheckedLevel = ns.getHackingLevel(); // Store initial hacking level
   const currentLevel = ns.getHackingLevel();
   let targetCount = getDynamicTargetCount(currentLevel);
 
-  // Kill all hack.js processes
-  await killHackProcesses(ns);
+  ns.tprint("Purchasing servers...");
+  const maxServers: number = ns.getPurchasedServerLimit();
+  const serverCost = ns.getPurchasedServerCost(mgmtRam);
 
-  // Execute targeted_setup.js with specified arguments
-  const pid = ns.exec(scriptToRun, "home", 1, true, targetCount);
-  if (pid > 0) {
-    ns.tprint(`Successfully started ${scriptToRun} with PID ${pid}.`);
-  } else {
-    ns.tprint(`Failed to start ${scriptToRun}. Check your script or system resources.`);
+  // Purchase job servers
+  while (ns.getPurchasedServers().length < maxServers - 1) {
+    await purchaseServers(ns, maxServers);
+    await ns.sleep(1000); // Add delay to avoid infinite loop
   }
 
-  ns.tprint("Starting main loop...");
-  while (true) {
-    // Cache server limits and costs
-    const serverCost = ns.getPurchasedServerCost(mgmtRam);
-    const availableMoney = ns.getServerMoneyAvailable("home");
+  // Check if there's enough money to purchase the management server
+  while (!mgmtOwned) {
+    const availableMoney = ns.getServerMoneyAvailable("home"); // Update money each iteration
 
-    // Check if there's enough money to purchase a server
-    if (!mgmtOwned) {
-      if (availableMoney >= serverCost) {
-        const hostname = ns.purchaseServer(mgmtSrv, mgmtRam);
+    if (availableMoney >= serverCost) {
+      const hostname = ns.purchaseServer(mgmtSrv, mgmtRam);
+      if (hostname) {
+        ns.tprint(`Purchased management server "${hostname}" for $${serverCost.toLocaleString()}`);
+        mgmtOwned = true;
 
-        if (hostname) {
-          ns.tprint(`Purchased server "${hostname}" for $${serverCost.toLocaleString()}`);
-          mgmtOwned = true;
-        } else {
-          ns.tprint(`Failed to purchase server.`);
-        }
-      } else {
-        ns.print(`Insufficient funds: $${availableMoney.toLocaleString()} / $${serverCost.toLocaleString()}`);
-      }
-    } else {
-      // If mgmt-A is available, run the IPvGo script
-      if (mgmtOwned && ipvgoPid === 0) {
         ns.tprint(`Running IPvGO script on ${mgmtSrv}...`);
         ns.scp(ipvgoScript, mgmtSrv);
         ipvgoPid = ns.exec(ipvgoScript, mgmtSrv, 1);
@@ -71,28 +58,26 @@ async function performInitialization(ns: NS): Promise<void> {
         } else {
           ns.tprint(`Failed to start ${ipvgoScript}. Check your script or system resources.`);
         }
-      }
-    }
-
-    // Check if the hacking level has increased by the interval
-    if (currentLevel >= lastCheckedLevel + interval) {
-      ns.tprint(`Hacking level increased to ${currentLevel}. Triggering actions...`);
-      targetCount = getDynamicTargetCount(currentLevel);
-
-      // Execute targeted_setup.js with specified arguments
-      const pid = ns.exec(scriptToRun, "home", 1, true, targetCount);
-      if (pid > 0) {
-        ns.tprint(`Successfully started ${scriptToRun} with PID ${pid}.`);
       } else {
-        ns.tprint(`Failed to start ${scriptToRun}. Check your script or system resources.`);
+        ns.tprint(`Failed to purchase server.`);
       }
-
-      // Update the last checked level
-      lastCheckedLevel = currentLevel;
+    } else {
+      ns.print(`Insufficient funds: $${availableMoney.toLocaleString()} / $${serverCost.toLocaleString()}`);
     }
+    await ns.sleep(5000); // Avoid locking up with too frequent checks
+  }
 
-    // Wait for a short interval before checking again
-    await ns.sleep(10000);
+  // Execute targeted_setup.js with specified arguments
+  ns.tprint(`Running ${scriptToRun} with targetCount=${targetCount} for ${iterations} iterations...`);
+  for (let i = 0; i < iterations; i++) {
+    ns.tprint(`Iteration ${i + 1} of ${iterations}`);
+    const pid = ns.exec(scriptToRun, "home", 1, false, targetCount);
+    if (pid > 0) {
+      ns.tprint(`Successfully started ${scriptToRun} with PID ${pid}.`);
+    } else {
+      ns.tprint(`Failed to start ${scriptToRun}. Check your script or system resources.`);
+    }
+    await ns.sleep(5000); // Sleep between iterations
   }
 }
 
@@ -102,7 +87,6 @@ function getDynamicTargetCount(currentLevel: number, minTarget = 10, maxTarget =
   }
   return Math.round(minTarget + ((maxTarget - minTarget) / maxLevel) * currentLevel);
 }
-
 
 export async function gatherConstants(ns: NS, target: string, host?: string): Promise<string> {
   const hostname = host || ns.getHostname();
@@ -321,4 +305,39 @@ export async function killHackProcesses(ns: NS): Promise<void> {
   }
 
   ns.tprint("Completed killing hack processes on all servers.");
+}
+
+export async function purchaseServers(ns: NS, maxServers: number): Promise<void> {
+  const ram = 512; // RAM for each purchased server
+  const delay = 1000; // Delay (ms) between checks
+
+  // Cache server costs
+  const serverCost = ns.getPurchasedServerCost(ram);
+
+  // Check if already at max servers
+  const purchasedServers = ns.getPurchasedServers();
+  if (purchasedServers.length >= maxServers - 1) {
+    ns.tprint("Maximum number of servers already purchased.");
+    return;
+  }
+
+  let i = purchasedServers.length;
+  while (i < maxServers - 1) {
+    const availableMoney = ns.getServerMoneyAvailable("home");
+
+    if (availableMoney >= serverCost) {
+      const hostname = ns.purchaseServer(`srv-${i}`, ram);
+      if (hostname) {
+        ns.tprint(`Purchased server "${hostname}" for $${serverCost.toLocaleString()}`);
+        i++;
+      } else {
+        ns.tprint(`Failed to purchase server. Retrying...`);
+      }
+    } else {
+      ns.print(`Insufficient funds: $${availableMoney.toLocaleString()} / $${serverCost.toLocaleString()}`);
+    }
+    await ns.sleep(delay); // Avoid infinite loop by sleeping between checks
+  }
+
+  ns.tprint("All servers purchased or maximum limit reached.");
 }

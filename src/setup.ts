@@ -217,8 +217,8 @@ async function getAllServers(
     }
   }
   return Array.from(visited).filter((server) => {
-    // Include only servers that are not home or private, but include srv-[A-Z]
-    return !server.startsWith("home") && (!server.startsWith("mgmt") || server.match(/^srv-[A-Z]$/));
+    // Include only servers that are not home or private, but include srv-[d+]
+    return !server.startsWith("home") && (!server.startsWith("mgmt") || server.match(/^srv-\d+$/));
   });
 }
 
