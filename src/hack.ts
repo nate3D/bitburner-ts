@@ -74,7 +74,7 @@ export async function main(ns: NS): Promise<void> {
           let runnableThreads = Math.min(remainingThreads, maxThreads);
 
           // Copy the script to the server if not already there
-          await ns.scp(script, server);
+          ns.scp(script, server);
 
           const pid = ns.exec(script, server, runnableThreads, ...args);
           if (pid > 0) {

@@ -3,6 +3,7 @@ import { NS } from "@ns";
 export async function main(ns: NS): Promise<void> {
   const iterations = ns.args[0] as number || 1;
   const initFile = "/data/init_complete.txt";
+  const hackScript = "formulas_hack.js";
 
   // Check if initialization file exists
   if (ns.fileExists(initFile, "home")) {
@@ -13,22 +14,21 @@ export async function main(ns: NS): Promise<void> {
   ns.tprint("Starting initialization process...");
 
   // Perform your initialization logic
-  await performInitialization(ns, iterations);
+  await performInitialization(ns, iterations, hackScript);
 
   // Mark initialization as complete
   ns.write(initFile, "Initialization complete", "w");
 }
 
 
-async function performInitialization(ns: NS, iterations: number): Promise<void> {
+async function performInitialization(ns: NS, iterations: number, hackScript: string): Promise<void> {
   const scriptToRun = "targeted_setup.js";
   const ipvgoScript = "ipvgo_v2.js";
-  let ipvgoPid = 0;
+  const autoTraderScript = "autoTrader.js";
   const mgmtSrv = "mgmt-A";
   const mgmtRam = 128;
   let mgmtOwned = ns.serverExists(mgmtSrv);
-  const currentLevel = ns.getHackingLevel();
-  let targetCount = getDynamicTargetCount(currentLevel);
+  let targetCount = 100;
 
   ns.tprint("Purchasing servers...");
   const maxServers: number = ns.getPurchasedServerLimit();
@@ -50,14 +50,11 @@ async function performInitialization(ns: NS, iterations: number): Promise<void> 
         ns.tprint(`Purchased management server "${hostname}" for $${serverCost.toLocaleString()}`);
         mgmtOwned = true;
 
-        ns.tprint(`Running IPvGO script on ${mgmtSrv}...`);
+        ns.tprint(`Running misc scripts on ${mgmtSrv}...`);
         ns.scp(ipvgoScript, mgmtSrv);
-        ipvgoPid = ns.exec(ipvgoScript, mgmtSrv, 1);
-        if (ipvgoPid > 0) {
-          ns.tprint(`Successfully started ${ipvgoScript} with PID ${ipvgoPid}.`);
-        } else {
-          ns.tprint(`Failed to start ${ipvgoScript}. Check your script or system resources.`);
-        }
+        ns.scp(autoTraderScript, mgmtSrv);
+        ns.exec(ipvgoScript, mgmtSrv, 1);
+        ns.exec(autoTraderScript, mgmtSrv, 1);
       } else {
         ns.tprint(`Failed to purchase server.`);
       }
@@ -81,14 +78,7 @@ async function performInitialization(ns: NS, iterations: number): Promise<void> 
   }
 }
 
-function getDynamicTargetCount(currentLevel: number, minTarget = 10, maxTarget = 99, maxLevel = 1000): number {
-  if (currentLevel >= maxLevel) {
-    return maxTarget; // Cap at maxTarget if level exceeds maxLevel
-  }
-  return Math.round(minTarget + ((maxTarget - minTarget) / maxLevel) * currentLevel);
-}
-
-export async function gatherConstants(ns: NS, target: string, host?: string): Promise<string> {
+export async function gatherConstants(ns: NS, target: string, hackScript: string, host?: string): Promise<string> {
   const hostname = host || ns.getHostname();
   const targetname = target || ns.getHostname();
   const datafile = `data/${targetname}-constants.json`;
@@ -117,7 +107,7 @@ export async function gatherConstants(ns: NS, target: string, host?: string): Pr
     !s.startsWith("srv") &&
     !s.startsWith("mgmt") &&
     ns.hasRootAccess(s));
-  const scriptRam = ns.getScriptRam("hack.js", "home");
+  const scriptRam = ns.getScriptRam(hackScript, "home");
   const weakenRam = ns.getScriptRam("scripts/weaken.js", "home");
   const hackRam = ns.getScriptRam("scripts/hack.js", "home");
   const growRam = ns.getScriptRam("scripts/grow.js", "home");
@@ -223,23 +213,6 @@ export async function findBestServers(ns: NS, count: number = 1): Promise<void> 
   ns.write(top_servers_file, JSON.stringify(topServers), "w");
 }
 
-export async function targetedHack(ns: NS): Promise<void> {
-  const top_servers_file = `/data/top_servers.json`;
-  const topServers = JSON.parse(await ns.read(top_servers_file));
-  const hack_script = "hack.js";
-
-  for (const { server } of topServers) {
-    ns.tprint(`Attempting to hack ${server}...`);
-    ns.scp(hack_script, server);
-    const pid = ns.exec(hack_script, server, 1, server);
-    if (pid > 0) {
-      ns.tprint(`Successfully started hack.js on ${server} targeting ${server}`);
-    } else {
-      ns.tprint(`Failed to start hack.js on ${server}`);
-    }
-  }
-}
-
 /**
  * Kills all processes running on a specified server.
  * @param {NS} ns - Netscript object
@@ -274,7 +247,7 @@ export function killAllProcesses(ns: NS, server: string): boolean {
   return true;
 }
 
-export async function killHackProcesses(ns: NS): Promise<void> {
+export async function killHackProcesses(ns: NS, hackScript: string): Promise<void> {
   // Get all servers in the network
   const allServers = await getAllServers(ns);
 
@@ -282,9 +255,9 @@ export async function killHackProcesses(ns: NS): Promise<void> {
     // Get all running processes on the server
     const processes = ns.ps(server);
 
-    // Filter processes that match 'hack.js'
+    // Filter processes that match our hacking scripts
     const hackProcesses = processes.filter(proc =>
-      proc.filename === "hack.js" ||
+      proc.filename === hackScript ||
       proc.filename === "scripts/hack.js" ||
       proc.filename === "scripts/grow.js" ||
       proc.filename === "scripts/weaken.js");

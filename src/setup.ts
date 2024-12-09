@@ -12,13 +12,14 @@ export async function main(ns: NS): Promise<void> {
 
   const force = ns.args[0] === "true" || ns.args[0] === true;
   const allServers = await getAllServers(ns);
+  const hackScript = "formulas_hack.js";
   const payloads = [
     "scripts/hack.js",
     "scripts/weaken.js",
     "scripts/grow.js",
     "logger.js",
-    "hack.js",
   ];
+  payloads.push(hackScript);
   const servers: string[] = [];
   const jobServers: string[] = [];
   const emptyServers: string[] = [];
@@ -78,7 +79,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // Create a datafile for each server
-    const datafile = await gatherConstants(ns, server);
+    const datafile = await gatherConstants(ns, server, hackScript);
     await ns.scp(datafile, server, "home");
   }
 
@@ -171,7 +172,7 @@ export async function main(ns: NS): Promise<void> {
       }
 
       // Create the datafile and gather constants
-      const datafile = await gatherConstants(ns, server);
+      const datafile = await gatherConstants(ns, server, hackScript);
 
       await ns.scp(datafile, server, "home");
 

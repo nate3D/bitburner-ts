@@ -1,6 +1,6 @@
 import { NS } from "@ns";
 import { logToFile } from "./logger";
-import { gatherConstants, targetedHack, getAllServers, killAllProcesses, findBestServers } from "main";
+import { gatherConstants, getAllServers, killAllProcesses, findBestServers } from "main";
 
 /** Main function to deploy a script to all available servers
  * @param {NS} ns - Netscript API object
@@ -12,6 +12,7 @@ export async function main(ns: NS): Promise<void> {
        e.g. run targeted_setup.js true 20`);
     return;
   }
+  const hackScript = "formulas_hack.js";
 
   const force = ns.args[0] === "true" || ns.args[0] === true;
   const count = Number(ns.args[1]);
@@ -20,7 +21,7 @@ export async function main(ns: NS): Promise<void> {
     ns.tprint(`targetCount must be a number between 0 and 99`)
   }
   const jobServers = ns.getPurchasedServers().filter((s: string) => ns.serverExists(s) && !s.startsWith("mgmt") && !s.startsWith("home"));
-  const hackScriptRam = ns.getScriptRam("hack.js", "home");
+  const hackScriptRam = ns.getScriptRam(hackScript, "home");
   await findBestServers(ns, count);
   const top_servers = JSON.parse(ns.read("/data/top_servers.json"));
   const targetServers = top_servers.map((s: { server: string }) => s.server);
@@ -30,8 +31,8 @@ export async function main(ns: NS): Promise<void> {
     "scripts/weaken.js",
     "scripts/grow.js",
     "logger.js",
-    "hack.js",
   ];
+  payloads.push(hackScript);
   const servers: string[] = [];
   const emptyServers: string[] = [];
   const emptyServersFile = "/empty-servers.txt";
@@ -77,7 +78,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // Create a datafile for each server
-    const datafile = await gatherConstants(ns, server);
+    const datafile = await gatherConstants(ns, server, hackScript);
     ns.scp(datafile, server, "home");
     for (const payload of payloads) {
       ns.scp(payload, server, "home");
@@ -127,43 +128,31 @@ export async function main(ns: NS): Promise<void> {
 
     const processes = ns.ps(server);
     const isRunningHackJs = processes.some(
-      (proc) => proc.filename === "hack.js"
+      (proc) => proc.filename === hackScript
     );
     if (isRunningHackJs) {
       if (force) {
         ns.tprint(`Force flag is set, killing all processes on ${server}`);
         killAllProcesses(ns, server);
       } else {
-        ns.tprint(`${server} is currently running hack.js, running again...`)
+        ns.tprint(`${server} is currently running ${hackScript}, running again...`)
       }
     }
 
     ns.tprint(`Deploying to ${server}...`);
 
     try {
-      const pid = ns.exec("hack.js", server, 1, server);
-      if (pid > 0) {
-        ns.tprint(
-          `Successfully started hack.js on ${server} targeting ${server}`
-        );
-      } else {
-        ns.tprint(`Failed to start hack.js on ${server} targeting ${server}`);
-        ns.tprint(`Available job servers: ${jobServers.join(", ")}`);
-        for (const jobServer of jobServers) {
-          ns.tprint(`Failed to start hack.js on ${server} targeting ${server}. Attempting to start on ${jobServer}...`);
-          ns.tprint(`Checking available RAM on ${jobServer}...`);
-          const jobServerAvailableRam = ns.getServerMaxRam(jobServer) - ns.getServerUsedRam(jobServer);
-          ns.tprint(`Available RAM on ${jobServer}: ${jobServerAvailableRam}`);
-          if (jobServerAvailableRam >= hackScriptRam) {
-            const pid = ns.exec("hack.js", jobServer, 1, server);
-            if (pid > 0) {
-              ns.tprint(
-                `Successfully started hack.js on ${jobServer} targeting ${server}`
-              );
-              break;
-            } else {
-              ns.tprint(`Failed to start hack.js on ${jobServer} targeting ${server}`);
-            }
+      for (const jobServer of jobServers) {
+        const jobServerAvailableRam = ns.getServerMaxRam(jobServer) - ns.getServerUsedRam(jobServer);
+        if (jobServerAvailableRam >= hackScriptRam) {
+          const pid = ns.exec(hackScript, jobServer, 1, server);
+          if (pid > 0) {
+            ns.tprint(
+              `Successfully started ${hackScript} on ${jobServer} targeting ${server}`
+            );
+            break;
+          } else {
+            ns.tprint(`Failed to start ${hackScript} on ${jobServer} targeting ${server}`);
           }
         }
       }
