@@ -3,7 +3,7 @@ import { NS } from "@ns";
 export async function main(ns: NS): Promise<void> {
   const iterations = ns.args[0] as number || 1;
   const initFile = "/data/init_complete.txt";
-  const hackScript = "formulas_hack.js";
+  const hackScript = "hack.js";
 
   // Check if initialization file exists
   if (ns.fileExists(initFile, "home")) {
@@ -28,7 +28,7 @@ async function performInitialization(ns: NS, iterations: number, hackScript: str
   const mgmtSrv = "mgmt-A";
   const mgmtRam = 128;
   let mgmtOwned = ns.serverExists(mgmtSrv);
-  let targetCount = 100;
+  let targetCount = 10;
 
   ns.tprint("Purchasing servers...");
   const maxServers: number = ns.getPurchasedServerLimit();
@@ -281,7 +281,7 @@ export async function killHackProcesses(ns: NS, hackScript: string): Promise<voi
 }
 
 export async function purchaseServers(ns: NS, maxServers: number): Promise<void> {
-  const ram = 512; // RAM for each purchased server
+  const ram = 128; // RAM for each purchased server
   const delay = 1000; // Delay (ms) between checks
 
   // Cache server costs

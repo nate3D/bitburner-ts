@@ -12,7 +12,7 @@ export async function main(ns: NS): Promise<void> {
        e.g. run targeted_setup.js true 20`);
     return;
   }
-  const hackScript = "formulas_hack.js";
+  const hackScript = "hack.js";
 
   const force = ns.args[0] === "true" || ns.args[0] === true;
   const count = Number(ns.args[1]);
