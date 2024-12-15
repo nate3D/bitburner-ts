@@ -170,40 +170,57 @@ export async function runOnBestServer(
   const jobServers = purchasedServers.filter(
     (s: string) => ns.serverExists(s) && !s.startsWith("mgmt") && !s.startsWith("home")
   );
-  const allServers = ["home", target, ...jobServers, ...hackableServers]; // Use purchased servers and home
+  const allServers = ["home", ...jobServers, target, ...hackableServers]; // Remove target and hackable servers from allocation
 
   let totalStartedThreads = 0;
   let toAllocate = threads;
 
-  for (const server of allServers) {
-    if (toAllocate <= 0) break;
+  // Retry mechanism
+  while (toAllocate > 0) {
+    let allocatedThisPass = 0;
 
-    const availableRam = ns.getServerMaxRam(server) - ns.getServerUsedRam(server);
-    const maxThreads = Math.floor(availableRam / ramCost);
+    for (const server of allServers) {
+      if (toAllocate <= 0) break;
 
-    if (maxThreads > 0) {
-      const runnableThreads = Math.min(toAllocate, maxThreads);
+      const availableRam = ns.getServerMaxRam(server) - ns.getServerUsedRam(server);
+      const maxThreads = Math.floor(availableRam / ramCost);
 
-      ns.scp(script, server);
+      if (maxThreads > 0) {
+        const runnableThreads = Math.min(toAllocate, maxThreads);
+        ns.scp(script, server);
 
-      const pid = ns.exec(script, server, runnableThreads, ...args);
-      if (pid > 0) {
-        ns.print(`Started ${script} on ${server} with ${runnableThreads}/${threads} threads.`);
-        totalStartedThreads += runnableThreads;
-        toAllocate -= runnableThreads;
+        const pid = ns.exec(script, server, runnableThreads, ...args);
+        if (pid > 0) {
+          ns.print(`Started ${script} on ${server} with ${runnableThreads}/${threads} threads.`);
+          totalStartedThreads += runnableThreads;
+          toAllocate -= runnableThreads;
+          allocatedThisPass += runnableThreads;
+        } else {
+          ns.print(`Failed to start ${script} on ${server} despite sufficient RAM.`);
+        }
       } else {
-        ns.print(`Failed to start ${script} on ${server} despite sufficient RAM.`);
+        ns.print(`Insufficient RAM on ${server} for ${script}. Needed per thread: ${ramCost}, Available: ${availableRam}`);
       }
-    } else {
-      ns.print(`Insufficient RAM on ${server} for ${script}. Needed per thread: ${ramCost}, Available: ${availableRam}`);
+    }
+
+    if (toAllocate > 0 && allocatedThisPass === 0) {
+      ns.print(`No additional threads could be allocated this pass. Sleeping 60 seconds and retrying...`);
+      // Sleep before retrying
+      await ns.sleep(60000);
+      ns.print(`Retrying allocation of ${toAllocate} threads for ${script}...`);
+      continue;
+    }
+    // If no progress was made in this pass, break to avoid infinite loops
+    if (allocatedThisPass === 0 && toAllocate > 0) {
+      ns.print(`ERROR: Could not allocate remaining ${toAllocate} threads for ${script} after retries.`);
+      break;
     }
   }
 
-  if (totalStartedThreads === 0) {
-    ns.print(`ERROR: Could not allocate any threads for ${script}. Operation skipped due to insufficient resources.`);
-  } else if (toAllocate > 0) {
+  if (totalStartedThreads < threads) {
     ns.print(`WARNING: Only allocated ${totalStartedThreads}/${threads} threads for ${script} due to resource constraints.`);
   }
 
   return totalStartedThreads;
 }
+
