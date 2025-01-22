@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { gatherConstants } from "main";
+import { gatherConstants } from "src/main";
 
 /** Main function to deploy a script to all available servers
  * @param {NS} ns - Netscript API object

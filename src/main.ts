@@ -54,7 +54,7 @@ async function performInitialization(ns: NS, iterations: number, hackScript: str
         ns.scp(ipvgoScript, mgmtSrv);
         ns.scp(autoTraderScript, mgmtSrv);
         ns.exec(ipvgoScript, mgmtSrv, 1);
-        ns.exec(autoTraderScript, mgmtSrv, 1);
+        // ns.exec(autoTraderScript, mgmtSrv, 1);
       } else {
         ns.tprint(`Failed to purchase server.`);
       }
@@ -281,7 +281,7 @@ export async function killHackProcesses(ns: NS, hackScript: string): Promise<voi
 }
 
 export async function purchaseServers(ns: NS, maxServers: number): Promise<void> {
-  const ram = 128; // RAM for each purchased server
+  const ram = 512; // RAM for each purchased server
   const delay = 1000; // Delay (ms) between checks
 
   // Cache server costs

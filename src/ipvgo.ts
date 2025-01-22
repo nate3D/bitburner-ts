@@ -1,5 +1,5 @@
 import { NS } from "@ns";
-import { logToFile } from "logger";
+import { logToFile } from "src/logger";
 
 /** @param {NS} ns */
 export async function main(ns: NS) {
