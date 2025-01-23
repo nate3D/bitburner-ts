@@ -198,9 +198,12 @@ export async function findBestServers(ns: NS, count: number = 1): Promise<void> 
   const serverRatings = hackableServers.map((server) => {
     const maxMoney = ns.getServerMaxMoney(server);
     const hackTime = ns.getHackTime(server);
-    const score = maxMoney / hackTime; // You can adjust this formula as needed
+    const serverHackingLevel = ns.getServerRequiredHackingLevel(server);
+    const levelAdjustment = 1 / (1 + Math.abs(playerHackingLevel - serverHackingLevel));
 
-    return { server, score, maxMoney, hackTime };
+    const score = (maxMoney / hackTime) * levelAdjustment;
+
+    return { server, score, maxMoney, hackTime, serverHackingLevel };
   });
 
   // Sort servers by their score in descending order

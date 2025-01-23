@@ -2,12 +2,14 @@ import { NS } from "@ns";
 
 /** @param {NS} ns */
 export async function main(ns: NS): Promise<void> {
-    ns.disableLog("ALL");
     const target = ns.args[0] as string;
     if (!target) {
         ns.tprint("ERROR: Target server not specified.");
+        ns.tprint("Usage: run drain-server.js [target]");
         return;
     }
+
+    ns.disableLog("ALL"); // Disable verbose logs for cleaner output
 
     const datafile = `data/${target}-constants.json`;
 
@@ -31,19 +33,21 @@ export async function main(ns: NS): Promise<void> {
         return;
     }
 
+    const hackScript = "scripts/hack.js";
+    const hackRam = 1.6;
+
+
     // Validate and destructure constants
     const {
         targetInfo,
         purchasedServers,
         weakenRam,
-        hackRam,
         growRam,
         hackableServers,
     }: {
         targetInfo: { hackDifficulty: number; minDifficulty: number; moneyMax: number; };
         purchasedServers: string[];
         weakenRam: number;
-        hackRam: number;
         growRam: number;
         hackableServers: string[];
     } = constants;
@@ -61,17 +65,6 @@ export async function main(ns: NS): Promise<void> {
         return;
     }
 
-    // Use the constants
-    ns.print(`Loaded constants from ${datafile}:`);
-    ns.print(`Purchased Servers: ${JSON.stringify(purchasedServers)}`);
-    ns.print(`Hackable Servers: ${JSON.stringify(hackableServers)}`);
-    ns.print(`Weaken RAM: ${weakenRam}, Grow RAM: ${growRam}, Hack RAM: ${hackRam}`);
-
-    const scriptDir = "scripts/";
-    const weakenScript = `${scriptDir}weaken.js`;
-    const hackScript = `${scriptDir}hack.js`;
-    const growScript = `${scriptDir}grow.js`;
-
     const jobServers = purchasedServers.filter(
         (s: string) =>
             ns.serverExists(s) &&
@@ -80,10 +73,12 @@ export async function main(ns: NS): Promise<void> {
     );
     const allServers = ["home", ...jobServers, target, ...hackableServers];
 
-    // Thread tracker
+    // Use the constants
+    ns.print(`Loaded constants from ${datafile}:`);
+    ns.print(`Purchased Servers: ${JSON.stringify(purchasedServers)}`);
+    ns.print(`Hackable Servers: ${JSON.stringify(hackableServers)}`);
+
     const threadTracker: Record<string, number> = {
-        weaken: 0,
-        grow: 0,
         hack: 0,
     };
 
@@ -93,8 +88,7 @@ export async function main(ns: NS): Promise<void> {
      * @param threads - Number of threads required
      */
     async function dispatchJob(command: "weaken" | "grow" | "hack", threads: number): Promise<void> {
-        const script = command === "weaken" ? weakenScript : command === "grow" ? growScript : hackScript;
-        const ramPerThread = command === "weaken" ? weakenRam : command === "grow" ? growRam : hackRam;
+        const ramPerThread = command === "hack" ? hackRam : 0;
 
         for (const server of allServers) {
             const availableRam = ns.getServerMaxRam(server) - ns.getServerUsedRam(server);
@@ -102,7 +96,8 @@ export async function main(ns: NS): Promise<void> {
             const threadsToUse = Math.min(maxThreads, threads);
 
             if (threadsToUse > 0) {
-                ns.exec(script, server, threadsToUse, target, command, Date.now());
+                ns.print(`Dispatching ${threadsToUse} threads to ${server} for ${command}...`);
+                ns.exec(hackScript, server, threadsToUse, target, command, Date.now());
                 threads -= threadsToUse;
                 threadTracker[command] += threadsToUse;
 
@@ -111,61 +106,26 @@ export async function main(ns: NS): Promise<void> {
         }
 
         if (threads > 0) {
-            //ns.print(`Unable to allocate ${threads} threads for ${command}. Retrying...`);
+            ns.print(`Unable to allocate ${threads} threads for ${command}. Retrying...`);
             await ns.sleep(1000); // Retry delay
             await dispatchJob(command, threads); // Retry allocation
         }
     }
 
-    /**
-     * Main batch loop
-     */
-    while (true) {
-        // Calculate required threads for each stage
-        const weakenThreads1 = Math.ceil(
-            (targetInfo.hackDifficulty - targetInfo.minDifficulty) / ns.weakenAnalyze(1, constants.coreCount)
-        );
-
-        const serverMoneyAvailable = Math.max(ns.getServerMoneyAvailable(constants.targetname), 1);
-        if (serverMoneyAvailable == 1) {
-            ns.tprint(`ERROR: Target server ${constants.targetname} has no money.`);
-        }
-
-        const growThreads = Math.ceil(
-            ns.growthAnalyze(constants.targetname, targetInfo.moneyMax / Math.max(ns.getServerMoneyAvailable(constants.targetname), 1))
-        );
-        const weakenThreads2 = Math.ceil(
-            (growThreads * ns.growthAnalyzeSecurity(1, constants.targetname, constants.coreCount)) /
-            ns.weakenAnalyze(1, constants.coreCount)
-        );
-        const hackAnalyze = Math.max(ns.hackAnalyze(constants.targetname), 1e-6);
-        const hackThreads = Math.ceil(
-            ((serverMoneyAvailable * 0.1) / hackAnalyze)
-        ); // Steal 10% of available money
-
-        // Debug logs for thread calculation
-        ns.tprint(`Calculated Threads:\n  Weaken1: ${weakenThreads1},\n  Grow: ${growThreads},\n  Weaken2: ${weakenThreads2},\n  Hack: ${hackThreads},\n  HackAnalyze: ${hackAnalyze},\n  ServerMoneyAvailable: ${serverMoneyAvailable}`);
-
-        ns.print("Starting new batch...");
-
-        await dispatchJob("weaken", weakenThreads1);
-        if (weakenThreads1 > 0) {
-            await ns.sleep(ns.getWeakenTime(target) + 100);
-        }
-
-        await dispatchJob("grow", growThreads);
-        if (growThreads > 0) {
-            await ns.sleep(ns.getGrowTime(target) + 100);
-        }
-
-        await dispatchJob("weaken", weakenThreads2);
-        if (weakenThreads2 > 0) {
-            await ns.sleep(ns.getWeakenTime(target) + 100);
-        }
-
-        await dispatchJob("hack", hackThreads);
-        if (hackThreads > 0) {
-            await ns.sleep(ns.getHackTime(target) + 100);
-        }
+    // Calculate the number of threads needed to hack all the money
+    const targetMoney = ns.getServerMoneyAvailable(target);
+    const hackAnalyze = ns.hackAnalyze(target); // Money stolen per thread (as a fraction)
+    if (hackAnalyze <= 0) {
+        ns.tprint("ERROR: Hack analysis returned 0. Hacking level may be too low for this server.");
+        return;
     }
+
+    ns.tprint(`Target money: ${targetMoney}, Hack analyze: ${hackAnalyze}, Hack difficulty: ${targetInfo.hackDifficulty}, Money max: ${targetInfo.moneyMax}`);
+    const hackThreads = Math.ceil(1 / hackAnalyze);
+    ns.tprint(`Calculated hack threads to drain ${target}: ${hackThreads}`);
+
+    // Dispatch hack threads
+    ns.print(`Dispatching ${hackThreads} hack threads to drain ${target}...`);
+    await dispatchJob("hack", hackThreads);
+    ns.tprint(`Hack job dispatched. Monitor progress in the logs.`);
 }

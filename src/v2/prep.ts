@@ -16,6 +16,8 @@ export async function main(ns: NS): Promise<void> {
         "scripts/hack.js",
         "scripts/weaken.js",
         "scripts/grow.js",
+        "v2/prep.js",
+        "v2/fleece.js"
     ];
     payloads.push(hackScript);
     const servers: string[] = [];
